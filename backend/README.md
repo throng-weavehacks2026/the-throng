@@ -6,10 +6,10 @@ Run the orchestrator backend:
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8787 --reload
 ```
 
-Live OpenAI mode requires:
+Live OpenAI mode reads `../.env` automatically:
 
 ```bash
-set OPENAI_API_KEY=...
+OPENAI_API_KEY=...
 ```
 
 Optional Weave tracing:
