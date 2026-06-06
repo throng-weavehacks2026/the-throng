@@ -37,10 +37,16 @@ const TOWER = { x: 486, y: 278 };
 const DIRECTOR_COUNT = 7;
 const BODY_COUNT = 52;
 const FIELD = {
-  left: 58,
-  top: 52,
-  right: WIDTH - 58,
-  bottom: HEIGHT - 70,
+  left: 76,
+  top: 62,
+  right: WIDTH - 76,
+  bottom: HEIGHT - 154,
+};
+const BODY_SAFE = {
+  left: FIELD.left + 18,
+  top: FIELD.top + 24,
+  right: FIELD.right - 18,
+  bottom: FIELD.bottom - 28,
 };
 
 const COHORT_COLORS: Record<Cohort, number> = {
@@ -66,10 +72,10 @@ const STRATEGIES = [
 const PATH_NODES = [
   { x: 304, y: 132 },
   { x: 650, y: 130 },
-  { x: 760, y: 300 },
-  { x: 620, y: 392 },
-  { x: 340, y: 390 },
-  { x: 206, y: 292 },
+  { x: 742, y: 284 },
+  { x: 610, y: 338 },
+  { x: 350, y: 338 },
+  { x: 224, y: 282 },
   { x: 388, y: 266 },
   { x: 576, y: 276 },
 ];
@@ -88,8 +94,8 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
 
 function fieldPoint(point: { x: number; y: number }) {
   return {
-    x: clamp(point.x, FIELD.left, FIELD.right),
-    y: clamp(point.y, FIELD.top, FIELD.bottom),
+    x: clamp(point.x, BODY_SAFE.left, BODY_SAFE.right),
+    y: clamp(point.y, BODY_SAFE.top, BODY_SAFE.bottom),
   };
 }
 

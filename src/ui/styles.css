@@ -31,11 +31,13 @@ button {
 
 .app-shell {
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 12px;
   padding: 12px;
+  overflow: hidden;
   background:
     linear-gradient(180deg, rgba(18, 22, 31, 0.96), rgba(6, 7, 10, 1)),
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 4px);
@@ -43,10 +45,12 @@ button {
 
 .game-section {
   min-width: 0;
+  min-height: 0;
   height: 100%;
 }
 
 .game-frame {
+  min-height: 0;
   height: 100%;
   display: grid;
   grid-template-rows: 58px minmax(0, 1fr);
@@ -112,11 +116,17 @@ h1 {
 #game-root {
   width: 100%;
   height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
 #game-root canvas {
-  width: 100% !important;
-  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: auto !important;
+  height: auto !important;
   image-rendering: pixelated;
 }
 
@@ -160,10 +170,12 @@ h1 {
 
 .control-rail {
   min-width: 0;
+  min-height: 0;
   height: 100%;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 10px;
+  overflow: hidden;
 }
 
 .panel {
