@@ -14,9 +14,11 @@ export type ThrongMetrics = {
   failedClaims: number;
   callsSaved: number;
   strategyScore: number;
-  activeCreatures: number;
+  activeBodies: number;
+  activeDirectors: number;
   activeStrategy: string;
   latestTrace: string;
+  mode: "visual-prototype" | "live-agents";
 };
 
 export type ThrongEvent = {

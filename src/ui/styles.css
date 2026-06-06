@@ -235,6 +235,7 @@ h1 {
 }
 
 .metric span,
+.mode-strip span,
 .strategy-strip span {
   display: block;
   color: #91a5b8;
@@ -310,6 +311,7 @@ h1 {
   font-size: 10px;
 }
 
+.mode-strip,
 .strategy-strip,
 .trace-strip {
   margin: 0 10px;
@@ -318,12 +320,24 @@ h1 {
   background: #101722;
 }
 
+.mode-strip {
+  margin-bottom: 8px;
+}
+
 .strategy-strip strong {
   display: block;
   margin-top: 4px;
   color: #eafff7;
   font-family: "Courier New", monospace;
   font-size: 12px;
+}
+
+.mode-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: #ffdca0;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
 }
 
 .trace-strip {

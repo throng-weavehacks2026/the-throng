@@ -12,9 +12,11 @@ const EMPTY_METRICS: ThrongMetrics = {
   failedClaims: 0,
   callsSaved: 0,
   strategyScore: 0,
-  activeCreatures: 0,
+  activeBodies: 0,
+  activeDirectors: 0,
   activeStrategy: "booting",
   latestTrace: "weave://pending",
+  mode: "visual-prototype",
 };
 
 type HistoryPoint = {
@@ -121,10 +123,14 @@ function StatusPanel({
         </div>
       </div>
       <div className="metric-grid">
-        <Metric label="Creatures" value={metrics.activeCreatures.toString()} />
+        <Metric label="Bodies" value={metrics.activeBodies.toString()} />
+        <Metric label="Directors" value={metrics.activeDirectors.toString()} />
         <Metric label="Coordination" value={`${Math.round(metrics.coordination * 100)}%`} />
         <Metric label="Claims Lost" value={metrics.failedClaims.toString()} />
-        <Metric label="Calls Saved" value={`${Math.round(metrics.callsSaved * 100)}%`} />
+      </div>
+      <div className="mode-strip">
+        <span>Mind Layer</span>
+        <strong>{metrics.mode === "live-agents" ? "live LLM directors" : "visual prototype, hooks pending"}</strong>
       </div>
       <MiniChart history={history} />
       <div className="strategy-strip">
