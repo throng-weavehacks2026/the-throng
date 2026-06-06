@@ -280,3 +280,24 @@ Sponsor usage is central:
 ## One-Line Pitch
 
 The Throng is a Redis keyspace organism: its location is key hashing, its senses are `SCAN`, its movement is `RENAME`, its conflicts are atomic command races, and its death is actual deletion.
+
+## Current Prototype
+
+The repository now contains the first playable web prototype:
+
+- React + Phaser + Vite frontend.
+- Dense micro-pixel colony animation.
+- Signal Tower build goal.
+- Rendered resource gathering and deposit loop.
+- Simulated Redis `SET NX` task-claim races.
+- Live coordination, strategy, claims, and tower-progress telemetry.
+- Event tape and Weave trace placeholders.
+
+Run it locally:
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`.

@@ -1,0 +1,462 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #06070a;
+  color: #e9fff6;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 12px;
+  padding: 12px;
+  background:
+    linear-gradient(180deg, rgba(18, 22, 31, 0.96), rgba(6, 7, 10, 1)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 4px);
+}
+
+.game-section {
+  min-width: 0;
+  height: 100%;
+}
+
+.game-frame {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 58px minmax(0, 1fr);
+  border: 1px solid #314052;
+  background: #090d13;
+  box-shadow:
+    inset 0 0 0 1px rgba(151, 255, 220, 0.06),
+    0 18px 56px rgba(0, 0, 0, 0.42);
+}
+
+.frame-header {
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 14px;
+  border-bottom: 1px solid #263343;
+  background: #0d121a;
+}
+
+.machine-label {
+  display: block;
+  color: #86a0b8;
+  font-family: "Courier New", monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 1px 0 0;
+  font-family: "Courier New", monospace;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: #eafff7;
+}
+
+.build-state {
+  min-width: 76px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #446172;
+  background: #111923;
+  color: #c9fff2;
+  font-family: "Courier New", monospace;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.viewport-wrap {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #05070a;
+}
+
+#game-root {
+  width: 100%;
+  height: 100%;
+}
+
+#game-root canvas {
+  width: 100% !important;
+  height: 100% !important;
+  image-rendering: pixelated;
+}
+
+.scanline {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0) 2px),
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+  mix-blend-mode: soft-light;
+}
+
+.broadcast-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  width: min(520px, calc(100% - 32px));
+  transform: translateX(-50%);
+  padding: 12px 14px;
+  border: 1px solid #d8fff6;
+  background: rgba(7, 10, 14, 0.92);
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(216, 255, 246, 0.18);
+}
+
+.broadcast-banner span {
+  display: block;
+  margin-bottom: 4px;
+  color: #8fa4d6;
+  font-family: "Courier New", monospace;
+  font-size: 10px;
+}
+
+.broadcast-banner strong {
+  color: #ffffff;
+  font-family: "Courier New", monospace;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.control-rail {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.panel {
+  border: 1px solid #314052;
+  background: #0c1118;
+  box-shadow: inset 0 0 0 1px rgba(151, 255, 220, 0.045);
+}
+
+.panel-title {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #263343;
+  color: #dffcf4;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-panel {
+  padding-bottom: 10px;
+}
+
+.tower-meter {
+  padding: 11px 10px 8px;
+}
+
+.meter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  font-size: 12px;
+  color: #9db2c4;
+}
+
+.meter-head strong {
+  color: #c9fff2;
+  font-family: "Courier New", monospace;
+}
+
+.meter-track {
+  height: 10px;
+  border: 1px solid #314052;
+  background: #070a0f;
+  overflow: hidden;
+}
+
+.meter-track div {
+  height: 100%;
+  background: linear-gradient(90deg, #8ef7c6, #e9ff9f);
+  transition: width 160ms linear;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 10px 9px;
+}
+
+.metric {
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid #263343;
+  background: #101722;
+}
+
+.metric span,
+.strategy-strip span {
+  display: block;
+  color: #91a5b8;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 5px;
+  font-family: "Courier New", monospace;
+  font-size: 18px;
+  line-height: 1;
+  color: #ffffff;
+}
+
+.chart-wrap {
+  margin: 0 10px 10px;
+  padding: 8px;
+  border: 1px solid #263343;
+  background: #091018;
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #b7c9da;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.mini-chart {
+  display: block;
+  width: 100%;
+  height: 82px;
+}
+
+.chart-axis {
+  stroke: #52627a;
+  stroke-width: 1;
+}
+
+.chart-grid {
+  stroke: #263343;
+  stroke-width: 1;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: square;
+  stroke-linejoin: round;
+}
+
+.tower-line {
+  stroke: #e9ff9f;
+}
+
+.coordination-line {
+  stroke: #8ef7c6;
+}
+
+.strategy-line {
+  stroke: #b8a7ff;
+}
+
+.chart-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #8194a6;
+  font-size: 10px;
+}
+
+.strategy-strip,
+.trace-strip {
+  margin: 0 10px;
+  padding: 8px;
+  border: 1px solid #263343;
+  background: #101722;
+}
+
+.strategy-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: #eafff7;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+}
+
+.trace-strip {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #9db2c4;
+  font-family: "Courier New", monospace;
+  font-size: 10px;
+  word-break: break-word;
+}
+
+.command-panel {
+  padding-bottom: 10px;
+}
+
+.button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.button-grid button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #3a4b5f;
+  background: #121b26;
+  color: #eafff7;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.button-grid button:hover {
+  border-color: #8ef7c6;
+  background: #162332;
+}
+
+.button-grid button:active {
+  transform: translateY(1px);
+}
+
+.event-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr);
+}
+
+.events {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.event {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #1c2733;
+}
+
+.event span {
+  color: #7f92a7;
+  font-family: "Courier New", monospace;
+  font-size: 10px;
+}
+
+.event p {
+  margin: 0;
+  color: #dce9e8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.event-claim p {
+  color: #ffdca0;
+}
+
+.event-strategy p,
+.event-trace p {
+  color: #d6cfff;
+}
+
+.event-tower p {
+  color: #c9fff2;
+}
+
+@media (max-width: 920px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    min-height: 100vh;
+    height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .game-frame {
+    height: 62vh;
+    min-height: 420px;
+  }
+
+  .control-rail {
+    grid-template-rows: auto auto 280px;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .frame-header {
+    height: 54px;
+    padding: 8px 10px;
+  }
+
+  h1 {
+    font-size: 18px;
+  }
+
+  .game-frame {
+    min-height: 360px;
+  }
+
+  .button-grid {
+    grid-template-columns: 1fr;
+  }
+}
