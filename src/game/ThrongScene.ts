@@ -36,6 +36,12 @@ const HEIGHT = 540;
 const TOWER = { x: 486, y: 278 };
 const DIRECTOR_COUNT = 7;
 const BODY_COUNT = 52;
+const FIELD = {
+  left: 58,
+  top: 52,
+  right: WIDTH - 58,
+  bottom: HEIGHT - 70,
+};
 
 const COHORT_COLORS: Record<Cohort, number> = {
   scout: 0x8de8ff,
@@ -61,8 +67,8 @@ const PATH_NODES = [
   { x: 304, y: 132 },
   { x: 650, y: 130 },
   { x: 760, y: 300 },
-  { x: 620, y: 430 },
-  { x: 340, y: 426 },
+  { x: 620, y: 392 },
+  { x: 340, y: 390 },
   { x: 206, y: 292 },
   { x: 388, y: 266 },
   { x: 576, y: 276 },
@@ -78,6 +84,13 @@ function lerp(a: number, b: number, t: number) {
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function fieldPoint(point: { x: number; y: number }) {
+  return {
+    x: clamp(point.x, FIELD.left, FIELD.right),
+    y: clamp(point.y, FIELD.top, FIELD.bottom),
+  };
 }
 
 export class ThrongScene extends Phaser.Scene {
@@ -224,6 +237,12 @@ export class ThrongScene extends Phaser.Scene {
       }
     }
 
+    terrain.fillStyle(0x080c12, 0.82);
+    terrain.fillRect(0, 0, WIDTH, FIELD.top - 10);
+    terrain.fillRect(0, FIELD.bottom + 32, WIDTH, HEIGHT - FIELD.bottom);
+    terrain.fillRect(0, 0, FIELD.left - 14, HEIGHT);
+    terrain.fillRect(FIELD.right + 14, 0, WIDTH - FIELD.right, HEIGHT);
+
     terrain.lineStyle(14, 0x1b2836, 0.7);
     for (let i = 0; i < PATH_NODES.length; i += 1) {
       const a = PATH_NODES[i];
@@ -254,6 +273,11 @@ export class ThrongScene extends Phaser.Scene {
     terrain.lineStyle(1, 0x263040, 0.24);
     for (let x = 0; x <= WIDTH; x += 24) terrain.lineBetween(x, 0, x, HEIGHT);
     for (let y = 0; y <= HEIGHT; y += 24) terrain.lineBetween(0, y, WIDTH, y);
+
+    terrain.lineStyle(2, 0x6f86a2, 0.55);
+    terrain.strokeRect(FIELD.left - 16, FIELD.top - 16, FIELD.right - FIELD.left + 32, FIELD.bottom - FIELD.top + 32);
+    terrain.lineStyle(1, 0x9fb7d4, 0.22);
+    terrain.strokeRect(FIELD.left - 9, FIELD.top - 9, FIELD.right - FIELD.left + 18, FIELD.bottom - FIELD.top + 18);
 
     const vignette = this.add.graphics();
     vignette.fillStyle(0x030407, 0.2);
@@ -291,8 +315,11 @@ export class ThrongScene extends Phaser.Scene {
 
   private addResource() {
     const node = Phaser.Utils.Array.GetRandom(PATH_NODES);
-    const x = clamp(node.x + Phaser.Math.Between(-78, 78), 46, WIDTH - 46);
-    const y = clamp(node.y + Phaser.Math.Between(-54, 54), 46, HEIGHT - 46);
+    const point = fieldPoint({
+      x: node.x + Phaser.Math.Between(-78, 78),
+      y: node.y + Phaser.Math.Between(-54, 54),
+    });
+    const { x, y } = point;
     const sprite = this.add.image(x, y, "resource").setScale(1.35).setDepth(4);
     sprite.setTint(Phaser.Math.RND.pick([0xcaf66f, 0x9fe870, 0xd8ff7a]));
     this.tweens.add({
@@ -313,8 +340,9 @@ export class ThrongScene extends Phaser.Scene {
       const radius = Phaser.Math.Between(38, 96);
       const x = TOWER.x + Math.cos(angle) * radius;
       const y = TOWER.y + Math.sin(angle) * radius;
-      const shadow = this.add.ellipse(x, y + 12, 18, 6, 0x000000, 0.36).setDepth(7);
-      const sprite = this.add.image(x, y, `creature-${cohort}-0`).setScale(1.38).setDepth(10);
+      const start = fieldPoint({ x, y });
+      const shadow = this.add.ellipse(start.x, start.y + 12, 18, 6, 0x000000, 0.36).setDepth(7);
+      const sprite = this.add.image(start.x, start.y, `creature-${cohort}-0`).setScale(1.38).setDepth(10);
       sprite.setOrigin(0.5, 0.82);
       const carryDot = this.add.ellipse(x, y - 20, 7, 5, 0xe9ff9f, 0).setDepth(12);
       const creature: Creature = {
@@ -323,8 +351,8 @@ export class ThrongScene extends Phaser.Scene {
         sprite,
         shadow,
         carryDot,
-        x,
-        y,
+        x: start.x,
+        y: start.y,
         path: [],
         speed: Phaser.Math.FloatBetween(12, 22),
         carrying: false,
@@ -452,8 +480,8 @@ export class ThrongScene extends Phaser.Scene {
 
     const roamNode = Phaser.Utils.Array.GetRandom(PATH_NODES);
     this.setDestination(creature, {
-      x: clamp(roamNode.x + Phaser.Math.Between(-44, 44), 34, WIDTH - 34),
-      y: clamp(roamNode.y + Phaser.Math.Between(-32, 32), 34, HEIGHT - 34),
+      x: roamNode.x + Phaser.Math.Between(-44, 44),
+      y: roamNode.y + Phaser.Math.Between(-32, 32),
     });
   }
 
@@ -507,29 +535,30 @@ export class ThrongScene extends Phaser.Scene {
   }
 
   private setDestination(creature: Creature, target: { x: number; y: number }) {
+    const safeTarget = fieldPoint(target);
     const node = PATH_NODES.reduce((best, item) => (distance(creature, item) < distance(creature, best) ? item : best));
-    const targetNode = PATH_NODES.reduce((best, item) => (distance(target, item) < distance(target, best) ? item : best));
+    const targetNode = PATH_NODES.reduce((best, item) => (distance(safeTarget, item) < distance(safeTarget, best) ? item : best));
     const path: Phaser.Math.Vector2[] = [];
 
     if (distance(creature, node) > 44) path.push(new Phaser.Math.Vector2(node.x, node.y));
     if (node !== targetNode && distance(node, targetNode) > 60) {
-      const mid = {
+      const mid = fieldPoint({
         x: (node.x + targetNode.x) / 2 + Phaser.Math.Between(-18, 18),
         y: (node.y + targetNode.y) / 2 + Phaser.Math.Between(-12, 12),
-      };
+      });
       path.push(new Phaser.Math.Vector2(mid.x, mid.y));
     }
-    if (distance(target, targetNode) > 34) path.push(new Phaser.Math.Vector2(targetNode.x, targetNode.y));
-    path.push(new Phaser.Math.Vector2(target.x, target.y));
+    if (distance(safeTarget, targetNode) > 34) path.push(new Phaser.Math.Vector2(targetNode.x, targetNode.y));
+    path.push(new Phaser.Math.Vector2(safeTarget.x, safeTarget.y));
 
     creature.path = path;
   }
 
   private randomNearTower() {
-    return {
+    return fieldPoint({
       x: TOWER.x + Phaser.Math.Between(-64, 64),
       y: TOWER.y + Phaser.Math.Between(-52, 66),
-    };
+    });
   }
 
   private updateResources() {
