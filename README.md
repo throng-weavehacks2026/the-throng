@@ -292,12 +292,17 @@ The repository now contains the first playable web prototype:
 - Simulated Redis `SET NX` task-claim races.
 - Live coordination, strategy, claims, and tower-progress telemetry.
 - Event tape and Weave trace placeholders.
+- FastAPI orchestrator backend that accepts colony state and returns structured director plans.
+- OpenAI live mode when `OPENAI_API_KEY` is set; local heuristic fallback otherwise.
 
 Run it locally:
 
 ```bash
 npm install
+npm run backend
 npm run dev
 ```
 
 Open `http://127.0.0.1:5173`.
+
+For live LLM orchestration, set `OPENAI_API_KEY` in your shell before starting `npm run backend`.

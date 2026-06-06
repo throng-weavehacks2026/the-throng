@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { Cohort, ThrongCommand, ThrongEvent, ThrongMetrics } from "./types";
+import type { Cohort, OrchestratorAction, OrchestratorPlan, ThrongCommand, ThrongEvent, ThrongMetrics } from "./types";
 
 type CreatureState = "idle" | "walking" | "claiming" | "carrying" | "depositing" | "stunned";
 
@@ -15,9 +15,11 @@ type ResourceNode = {
 type Creature = {
   id: number;
   cohort: Cohort;
+  director: boolean;
   sprite: Phaser.GameObjects.Image;
   shadow: Phaser.GameObjects.Ellipse;
   carryDot: Phaser.GameObjects.Ellipse;
+  directorRing?: Phaser.GameObjects.Ellipse;
   x: number;
   y: number;
   path: Phaser.Math.Vector2[];
@@ -119,6 +121,7 @@ export class ThrongScene extends Phaser.Scene {
   private deliveryRate = 0.12;
   private activeStrategy = STRATEGIES[0];
   private latestTrace = "weave://pending/director-scout";
+  private mindMode: ThrongMetrics["mode"] = "heuristic-orchestrator";
   private showClaims = true;
   private lastMetricEmit = 0;
   private lastStrategyAt = 0;
@@ -145,7 +148,7 @@ export class ThrongScene extends Phaser.Scene {
     this.spawnCreatures(BODY_COUNT);
 
     this.addEvent("system", `${DIRECTOR_COUNT} director minds assigned to ${BODY_COUNT} game-world bodies`);
-    this.addEvent("trace", "prototype mode: LLM, Redis, and Weave hooks are not live yet");
+    this.addEvent("trace", "orchestrator endpoint pending first plan");
     this.addEvent("system", "body physics online: paths, claim locks, carry states, deposit windows");
     this.emitUpdate(true);
 
@@ -347,16 +350,22 @@ export class ThrongScene extends Phaser.Scene {
       const x = TOWER.x + Math.cos(angle) * radius;
       const y = TOWER.y + Math.sin(angle) * radius;
       const start = fieldPoint({ x, y });
-      const shadow = this.add.ellipse(start.x, start.y + 12, 18, 6, 0x000000, 0.36).setDepth(7);
-      const sprite = this.add.image(start.x, start.y, `creature-${cohort}-0`).setScale(1.38).setDepth(10);
+      const director = i < DIRECTOR_COUNT;
+      const shadow = this.add.ellipse(start.x, start.y + 12, director ? 22 : 18, 6, 0x000000, 0.36).setDepth(7);
+      const directorRing = director
+        ? this.add.ellipse(start.x, start.y + 2, 27, 31, COHORT_COLORS[cohort], 0.13).setDepth(9)
+        : undefined;
+      const sprite = this.add.image(start.x, start.y, `creature-${cohort}-0`).setScale(director ? 1.48 : 1.34).setDepth(10);
       sprite.setOrigin(0.5, 0.82);
-      const carryDot = this.add.ellipse(x, y - 20, 7, 5, 0xe9ff9f, 0).setDepth(12);
+      const carryDot = this.add.ellipse(start.x, start.y - 20, 7, 5, 0xe9ff9f, 0).setDepth(12);
       const creature: Creature = {
         id: i,
         cohort,
+        director,
         sprite,
         shadow,
         carryDot,
+        directorRing,
         x: start.x,
         y: start.y,
         path: [],
@@ -387,16 +396,18 @@ export class ThrongScene extends Phaser.Scene {
       const walking = creature.path.length > 0 && creature.state !== "stunned";
       const frame = walking && Math.sin(this.worldAge * 5.2 + creature.phase) > 0 ? 1 : 0;
       creature.sprite.setTexture(`creature-${creature.cohort}-${frame}`);
-      creature.sprite.setPosition(creature.x, creature.y + Math.sin(this.worldAge * 3.8 + creature.phase) * 0.9);
+      creature.sprite.setPosition(creature.x, creature.y + Math.sin(this.worldAge * 2.2 + creature.phase) * 0.45);
       creature.shadow.setPosition(creature.x, creature.y + 12);
       creature.carryDot.setPosition(creature.x, creature.y - 24);
       creature.carryDot.setAlpha(creature.carrying ? 0.95 : 0);
+      creature.directorRing?.setPosition(creature.x, creature.y + 1);
+      creature.directorRing?.setAlpha(0.11 + Math.sin(this.worldAge * 1.7 + creature.phase) * 0.04);
 
       const target = creature.path[0];
       if (target) creature.sprite.setFlipX(target.x < creature.x);
       creature.sprite.setAlpha(creature.state === "stunned" ? 0.6 : 1);
       creature.sprite.setAngle(creature.state === "stunned" ? Math.sin(this.worldAge * 18) * 4 : 0);
-      creature.sprite.setScale(creature.carrying ? 1.48 : 1.38);
+      creature.sprite.setScale(creature.carrying ? (creature.director ? 1.58 : 1.44) : creature.director ? 1.48 : 1.34);
     }
   }
 
@@ -464,6 +475,15 @@ export class ThrongScene extends Phaser.Scene {
 
   private pickTask(creature: Creature) {
     if (creature.state === "stunned") return;
+
+    if (creature.cohort === "scout" && !creature.carrying && Phaser.Math.FloatBetween(0, 1) < 0.72) {
+      const outer = Phaser.Utils.Array.GetRandom(PATH_NODES.slice(0, 6));
+      this.setDestination(creature, {
+        x: outer.x + Phaser.Math.Between(-58, 58),
+        y: outer.y + Phaser.Math.Between(-34, 34),
+      });
+      return;
+    }
 
     if (creature.cohort === "builder" && Phaser.Math.FloatBetween(0, 1) < 0.72) {
       this.setDestination(creature, this.randomNearTower());
@@ -536,7 +556,7 @@ export class ThrongScene extends Phaser.Scene {
     creature.path = [];
     this.flashAt(resource.x, resource.y, 0xff7676, 8);
     this.drawClaimBurst(resource.x, resource.y);
-    this.say(creature, "LOCK FAIL");
+    this.say(creature, "CLAIM LOST");
     this.addEvent("claim", `claim collision: ${text}`);
   }
 
@@ -739,13 +759,83 @@ export class ThrongScene extends Phaser.Scene {
         this.addEvent("strategy", "operator accepted Critic recommendation: retry collisions with relay backoff");
         this.syncPulse(0xa9ffb4);
         break;
+      case "scout_sweep":
+        this.executeScoutSweep();
+        break;
+      case "build_focus":
+        this.executeBuildFocus();
+        break;
       case "toggle_claims":
         this.showClaims = !this.showClaims;
         this.addEvent("system", `claim route overlay ${this.showClaims ? "enabled" : "disabled"}`);
         break;
+      case "orchestrator_plan":
+        this.applyOrchestratorPlan(event.detail.plan);
+        break;
     }
     this.emitUpdate(true);
   };
+
+  private applyOrchestratorPlan(plan: OrchestratorPlan) {
+    this.mindMode = plan.live_llm ? "live-agents" : "heuristic-orchestrator";
+    this.activeStrategy = plan.strategy_name;
+    this.latestTrace = plan.trace_url ?? (plan.live_llm ? `weave://trace/live-${Math.floor(this.worldAge)}` : "local://heuristic-orchestrator");
+    this.addEvent("message", `${plan.live_llm ? "LLM" : "Heuristic"} Orchestrator: ${plan.summary}`);
+    this.addEvent("strategy", `planned action: ${plan.expected_effect}`);
+
+    plan.actions.forEach((action) => this.executeOrchestratorAction(action));
+    this.strategyScore = clamp(this.strategyScore + (plan.live_llm ? 0.055 : 0.035), 0, 0.98);
+    this.coordination = clamp(this.coordination + (plan.live_llm ? 0.045 : 0.025), 0, 1);
+  }
+
+  private executeOrchestratorAction(action: OrchestratorAction) {
+    switch (action) {
+      case "drop_resources":
+        this.spawnResources(5);
+        break;
+      case "boost_coordination":
+        this.strategyScore = clamp(this.strategyScore + 0.07, 0, 1);
+        this.coordination = clamp(this.coordination + 0.04, 0, 1);
+        this.syncPulse(0xa9ffb4);
+        break;
+      case "scout_sweep":
+        this.executeScoutSweep();
+        break;
+      case "build_focus":
+        this.executeBuildFocus();
+        break;
+      case "stress_test":
+        this.failedClaims += 3;
+        break;
+      case "toggle_claims":
+        this.showClaims = !this.showClaims;
+        break;
+    }
+  }
+
+  private executeScoutSweep() {
+    this.activeStrategy = "wide scout sweep";
+    this.addEvent("message", "Orchestrator command: scouts fan out to discover unclaimed shards");
+    this.creatures
+      .filter((creature) => creature.cohort === "scout" || creature.director)
+      .forEach((creature, index) => {
+        const node = PATH_NODES[index % Math.min(6, PATH_NODES.length)];
+        this.setDestination(creature, {
+          x: node.x + Phaser.Math.Between(-62, 62),
+          y: node.y + Phaser.Math.Between(-34, 34),
+        });
+      });
+    this.syncPulse(0x8de8ff);
+  }
+
+  private executeBuildFocus() {
+    this.activeStrategy = "builder-first deposit windows";
+    this.addEvent("message", "Orchestrator command: builders tighten around Signal Tower deposit lanes");
+    this.creatures
+      .filter((creature) => creature.cohort === "builder" || creature.cohort === "coordinator")
+      .forEach((creature) => this.setDestination(creature, this.randomNearTower()));
+    this.syncPulse(0xffdd7a);
+  }
 
   private addEvent(kind: ThrongEvent["kind"], text: string) {
     const stamp = new Date(Date.now()).toLocaleTimeString([], {
@@ -775,7 +865,7 @@ export class ThrongScene extends Phaser.Scene {
       activeDirectors: DIRECTOR_COUNT,
       activeStrategy: this.activeStrategy,
       latestTrace: this.latestTrace,
-      mode: "visual-prototype",
+      mode: this.mindMode,
     };
 
     window.dispatchEvent(

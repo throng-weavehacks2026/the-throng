@@ -367,6 +367,75 @@ h1 {
   padding-bottom: 10px;
 }
 
+.orchestrator-card {
+  margin: 10px 10px 0;
+  padding: 9px;
+  border: 1px solid #263343;
+  background: #101722;
+}
+
+.orchestrator-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.orchestrator-status span {
+  color: #8ef7c6;
+  font-family: "Courier New", monospace;
+  font-size: 10px;
+}
+
+.orchestrator-status strong {
+  color: #ffffff;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  text-align: right;
+}
+
+.orchestrator-card p {
+  min-height: 30px;
+  margin: 0 0 9px;
+  color: #b9cadd;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.instruction-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px;
+  gap: 7px;
+}
+
+.instruction-row input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid #3a4b5f;
+  background: #090f16;
+  color: #eafff7;
+  padding: 0 9px;
+  font: 12px "Courier New", monospace;
+}
+
+.instruction-row input::placeholder {
+  color: #6f8398;
+}
+
+.instruction-row button {
+  height: 34px;
+  border: 1px solid #3a4b5f;
+  background: #14202b;
+  color: #eafff7;
+  cursor: pointer;
+}
+
+.instruction-row button:disabled {
+  color: #6f8398;
+  cursor: wait;
+}
+
 .button-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

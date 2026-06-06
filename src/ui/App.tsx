@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Phaser from "phaser";
 import { Activity, Eye, Gauge, RadioTower, Route, Sparkles, Zap } from "lucide-react";
 import { gameConfig } from "../game/ThrongScene";
-import type { ThrongCommand, ThrongEvent, ThrongMetrics, ThrongUpdate } from "../game/types";
+import type { OrchestratorPlan, ThrongCommand, ThrongEvent, ThrongMetrics, ThrongUpdate } from "../game/types";
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8787";
 
 const EMPTY_METRICS: ThrongMetrics = {
   elapsed: 0,
@@ -16,7 +18,7 @@ const EMPTY_METRICS: ThrongMetrics = {
   activeDirectors: 0,
   activeStrategy: "booting",
   latestTrace: "weave://pending",
-  mode: "visual-prototype",
+  mode: "heuristic-orchestrator",
 };
 
 type HistoryPoint = {
@@ -28,9 +30,14 @@ type HistoryPoint = {
 
 export function App() {
   const gameRef = useRef<Phaser.Game | null>(null);
+  const metricsRef = useRef<ThrongMetrics>(EMPTY_METRICS);
+  const eventsRef = useRef<ThrongEvent[]>([]);
   const [metrics, setMetrics] = useState<ThrongMetrics>(EMPTY_METRICS);
   const [events, setEvents] = useState<ThrongEvent[]>([]);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [lastPlan, setLastPlan] = useState<OrchestratorPlan | null>(null);
+  const [orchestratorStatus, setOrchestratorStatus] = useState("connecting");
+  const [orchestratorBusy, setOrchestratorBusy] = useState(false);
 
   useEffect(() => {
     if (!gameRef.current) {
@@ -38,6 +45,8 @@ export function App() {
     }
 
     const onUpdate = (event: CustomEvent<ThrongUpdate>) => {
+      metricsRef.current = event.detail.metrics;
+      eventsRef.current = event.detail.events;
       setMetrics(event.detail.metrics);
       setEvents(event.detail.events);
       setHistory((current) => {
@@ -60,6 +69,42 @@ export function App() {
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
+  }, []);
+
+  const requestOrchestrator = async (playerInstruction?: string) => {
+    if (orchestratorBusy) return;
+    setOrchestratorBusy(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/orchestrator/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          metrics: metricsRef.current,
+          events: eventsRef.current,
+          player_instruction: playerInstruction || undefined,
+        }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const plan = (await response.json()) as OrchestratorPlan;
+      setLastPlan(plan);
+      setOrchestratorStatus(plan.live_llm ? "live OpenAI" : "local heuristic");
+      window.dispatchEvent(new CustomEvent("throng:command", { detail: { type: "orchestrator_plan", plan } }));
+    } catch (error) {
+      setOrchestratorStatus("backend offline");
+    } finally {
+      setOrchestratorBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    requestOrchestrator("Initial plan: improve the colony toward the Signal Tower.");
+    const timer = window.setInterval(() => {
+      requestOrchestrator();
+    }, 14000);
+    return () => window.clearInterval(timer);
+    // The function intentionally reads latest metrics/events from refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const broadcastReady = metrics.towerProgress >= 0.99;
@@ -93,7 +138,12 @@ export function App() {
 
       <aside className="control-rail" aria-label="Simulation telemetry">
         <StatusPanel metrics={metrics} history={history} />
-        <CommandPanel />
+        <CommandPanel
+          busy={orchestratorBusy}
+          status={orchestratorStatus}
+          lastPlan={lastPlan}
+          onAsk={requestOrchestrator}
+        />
         <EventTape events={events} />
       </aside>
     </main>
@@ -130,7 +180,7 @@ function StatusPanel({
       </div>
       <div className="mode-strip">
         <span>Mind Layer</span>
-        <strong>{metrics.mode === "live-agents" ? "live LLM directors" : "visual prototype, hooks pending"}</strong>
+        <strong>{metrics.mode === "live-agents" ? "live LLM directors" : "local orchestrator active"}</strong>
       </div>
       <MiniChart history={history} />
       <div className="strategy-strip">
@@ -188,26 +238,70 @@ function MiniChart({ history }: { history: HistoryPoint[] }) {
         <path d={paths.strategy} className="chart-line strategy-line" />
       </svg>
       <div className="chart-legend">
-        <span>Tower</span>
-        <span>Coordination</span>
-        <span>Strategy</span>
+        <span>0:00</span>
+        <span>Coordination over time</span>
+        <span>now</span>
       </div>
     </div>
   );
 }
 
-function CommandPanel() {
+function CommandPanel({
+  busy,
+  status,
+  lastPlan,
+  onAsk,
+}: {
+  busy: boolean;
+  status: string;
+  lastPlan: OrchestratorPlan | null;
+  onAsk: (instruction?: string) => void;
+}) {
+  const [instruction, setInstruction] = useState("");
   const send = (command: ThrongCommand) => {
     window.dispatchEvent(new CustomEvent("throng:command", { detail: command }));
+  };
+
+  const submitInstruction = () => {
+    onAsk(instruction.trim() || undefined);
+    setInstruction("");
   };
 
   return (
     <section className="panel command-panel">
       <div className="panel-title">
         <Zap size={15} />
-        <span>Operator</span>
+        <span>Orchestrator</span>
+      </div>
+      <div className="orchestrator-card">
+        <div className="orchestrator-status">
+          <span>{busy ? "thinking" : status}</span>
+          <strong>{lastPlan?.strategy_name ?? "waiting for first plan"}</strong>
+        </div>
+        <p>{lastPlan?.summary ?? "The director will read the colony state and issue legal game commands."}</p>
+        <div className="instruction-row">
+          <input
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            placeholder="tell the Throng what to do"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submitInstruction();
+            }}
+          />
+          <button type="button" onClick={submitInstruction} disabled={busy}>
+            Ask
+          </button>
+        </div>
       </div>
       <div className="button-grid">
+        <button type="button" onClick={() => send({ type: "scout_sweep" })}>
+          <Route size={15} />
+          <span>Scout Sweep</span>
+        </button>
+        <button type="button" onClick={() => send({ type: "build_focus" })}>
+          <RadioTower size={15} />
+          <span>Build Focus</span>
+        </button>
         <button type="button" onClick={() => send({ type: "drop_resources" })}>
           <Sparkles size={15} />
           <span>Seed Field</span>
