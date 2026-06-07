@@ -1,5 +1,28 @@
 import Phaser from "phaser";
-import type { Cohort, OrchestratorAction, OrchestratorPlan, ThrongCommand, ThrongEvent, ThrongMetrics } from "./types";
+import { claimResource } from "./api";
+import type { Cohort, GlyphEvent, OrchestratorAction, OrchestratorPlan, Phase, ThrongCommand, ThrongEvent, ThrongMetrics, ThrongUpdate } from "./types";
+import {
+  BASE_SYLLABLES,
+  BODY_COUNT,
+  COHORT_COLORS,
+  COHORTS,
+  COMPOUND_MIN_AGE,
+  DIRECTOR_COUNT,
+  FIELD,
+  GLYPH_EVENTS,
+  HEAR_RANGE,
+  HEIGHT,
+  LEARN_THRESHOLD,
+  PATH_NODES,
+  PHASE_THRESHOLDS,
+  STRATEGIES,
+  TOWER,
+  WIDTH,
+  clamp,
+  distance,
+  fieldPoint,
+  lerp,
+} from "./worldConfig";
 
 type CreatureState = "idle" | "walking" | "claiming" | "carrying" | "depositing" | "stunned";
 
@@ -11,6 +34,8 @@ type ResourceNode = {
   claimedBy?: number;
   amount: number;
 };
+
+type GlyphMemoryEntry = { syllable: string; strength: number };
 
 type Creature = {
   id: number;
@@ -26,80 +51,33 @@ type Creature = {
   speed: number;
   carrying: boolean;
   targetResource?: ResourceNode;
+  pendingResource?: ResourceNode;
   claimUntil: number;
   bubbleUntil: number;
   stunUntil: number;
   phase: number;
   state: CreatureState;
+  glyphMemory: Map<string, GlyphMemoryEntry[]>;
+  glyphCooldown: number;
+  heardLog: Array<{ event: GlyphEvent; syllable: string; time: number }>;
 };
 
-const WIDTH = 960;
-const HEIGHT = 540;
-const TOWER = { x: 486, y: 278 };
-const DIRECTOR_COUNT = 7;
-const BODY_COUNT = 52;
-const FIELD = {
-  left: 76,
-  top: 62,
-  right: WIDTH - 76,
-  bottom: HEIGHT - 154,
-};
-const BODY_SAFE = {
-  left: FIELD.left + 18,
-  top: FIELD.top + 24,
-  right: FIELD.right - 18,
-  bottom: FIELD.bottom - 28,
+type CommArc = {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  color: number;
+  time: number;
 };
 
-const COHORT_COLORS: Record<Cohort, number> = {
-  scout: 0x8de8ff,
-  gatherer: 0xffdd7a,
-  builder: 0xa9ffb4,
-  coordinator: 0xff9ce2,
-  critic: 0xff827a,
-  memory: 0xc4b5ff,
+type GlyphMessage = {
+  from: number;
+  to: number;
+  tokens: string[];
+  event: GlyphEvent;
+  time: number;
 };
-
-const COHORTS: Cohort[] = ["scout", "gatherer", "builder", "coordinator", "critic", "memory"];
-
-const STRATEGIES = [
-  "wide scout sweep",
-  "nearest-carrier assignment",
-  "two-hop relay routing",
-  "claim backoff after collision",
-  "builder-first deposit windows",
-  "tower orbit synchronization",
-];
-
-const PATH_NODES = [
-  { x: 304, y: 132 },
-  { x: 650, y: 130 },
-  { x: 742, y: 284 },
-  { x: 610, y: 338 },
-  { x: 350, y: 338 },
-  { x: 224, y: 282 },
-  { x: 388, y: 266 },
-  { x: 576, y: 276 },
-];
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
-function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function fieldPoint(point: { x: number; y: number }) {
-  return {
-    x: clamp(point.x, BODY_SAFE.left, BODY_SAFE.right),
-    y: clamp(point.y, BODY_SAFE.top, BODY_SAFE.bottom),
-  };
-}
 
 export class ThrongScene extends Phaser.Scene {
   private creatures: Creature[] = [];
@@ -109,6 +87,7 @@ export class ThrongScene extends Phaser.Scene {
   private towerCore!: Phaser.GameObjects.Rectangle;
   private towerRings: Phaser.GameObjects.Rectangle[] = [];
   private routeLines!: Phaser.GameObjects.Graphics;
+  private commLayer!: Phaser.GameObjects.Graphics;
   private effectLayer!: Phaser.GameObjects.Graphics;
   private bubbleLayer!: Phaser.GameObjects.Container;
   private worldAge = 0;
@@ -128,6 +107,21 @@ export class ThrongScene extends Phaser.Scene {
   private lastForcedTaskAt = 0;
   private finaleSent = false;
 
+  // Glyph system state
+  private globalVocabulary: Map<string, number> = new Map();
+  private syllablePool: string[] = [...BASE_SYLLABLES];
+  private usedSyllables: Set<string> = new Set();
+  private compoundTokens: Map<string, string> = new Map();
+  private messageHistory: GlyphMessage[] = [];
+  private commArcs: CommArc[] = [];
+  private glyphsThisWindow: number[] = [];
+  private lastGlyphTick = 0;
+
+  // Intelligence tracking
+  private intelligence = 4;
+  private crossed = false;
+  private currentPhase: Phase = "babble";
+
   constructor() {
     super("ThrongScene");
   }
@@ -140,6 +134,7 @@ export class ThrongScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor("#0b0d12");
     this.drawTerrain();
     this.routeLines = this.add.graphics();
+    this.commLayer = this.add.graphics();
     this.effectLayer = this.add.graphics();
     this.bubbleLayer = this.add.container(0, 0);
 
@@ -148,7 +143,6 @@ export class ThrongScene extends Phaser.Scene {
     this.spawnCreatures(BODY_COUNT);
 
     this.addEvent("system", `${DIRECTOR_COUNT} director minds assigned to ${BODY_COUNT} game-world bodies`);
-    this.addEvent("trace", "orchestrator endpoint pending first plan");
     this.addEvent("system", "body physics online: paths, claim locks, carry states, deposit windows");
     this.emitUpdate(true);
 
@@ -163,11 +157,15 @@ export class ThrongScene extends Phaser.Scene {
     const dt = Math.min(delta / 1000, 0.05);
     this.worldAge += dt;
 
+    this.updatePhase();
     this.updateCreatures(dt);
     this.updateResources();
     this.updateTower();
     this.updateMetrics(dt);
+    this.updateGlyphSystem(dt);
+    this.updateIntelligence(dt);
     this.drawRoutes();
+    this.drawCommArcs();
 
     if (this.worldAge - this.lastStrategyAt > 11) {
       this.improveStrategy();
@@ -182,6 +180,352 @@ export class ThrongScene extends Phaser.Scene {
       this.emitUpdate();
     }
   }
+
+  // ─── Phase Management ───
+
+  private updatePhase() {
+    const age = this.worldAge;
+    if (age < PHASE_THRESHOLDS.babble[1]) this.currentPhase = "babble";
+    else if (age < PHASE_THRESHOLDS.structure[1]) this.currentPhase = "structure";
+    else if (age < PHASE_THRESHOLDS.protocol[1]) this.currentPhase = "protocol";
+    else this.currentPhase = "lockout";
+  }
+
+  // ─── Glyph Learning System ───
+
+  private updateGlyphSystem(dt: number) {
+    this.glyphsThisWindow = this.glyphsThisWindow.filter(t => this.worldAge - t < 5);
+
+    const emitChance = this.getGlyphEmitRate() * dt;
+    for (const creature of this.creatures) {
+      if (creature.state === "stunned") continue;
+      if (this.worldAge < creature.glyphCooldown) continue;
+
+      if (Phaser.Math.FloatBetween(0, 1) < emitChance) {
+        this.emitContextualGlyph(creature);
+      }
+    }
+
+    if (this.worldAge - this.lastGlyphTick > 8 && this.worldAge > COMPOUND_MIN_AGE) {
+      this.lastGlyphTick = this.worldAge;
+      this.tryFormCompound();
+    }
+
+    this.commArcs = this.commArcs.filter(arc => this.worldAge - arc.time < 1.8);
+  }
+
+  private getGlyphEmitRate(): number {
+    switch (this.currentPhase) {
+      case "babble": return 0.04;
+      case "structure": return 0.09;
+      case "protocol": return 0.16;
+      case "lockout": return 0.28;
+    }
+  }
+
+  private emitContextualGlyph(creature: Creature) {
+    const event = this.inferCurrentEvent(creature);
+    const tokens = this.buildGlyphForEvent(creature, event);
+    if (!tokens.length) return;
+
+    creature.glyphCooldown = this.worldAge + this.getGlyphCooldown();
+    this.glyphsThisWindow.push(this.worldAge);
+
+    const glyphText = tokens.join("-");
+    this.sayGlyph(creature, glyphText);
+
+    tokens.forEach(t => this.globalVocabulary.set(t, (this.globalVocabulary.get(t) ?? 0) + 1));
+
+    const nearby = this.creaturesInRange(creature, HEAR_RANGE);
+    for (const listener of nearby) {
+      this.teachGlyph(listener, event, tokens[0]);
+
+      this.commArcs.push({
+        fromX: creature.x,
+        fromY: creature.y,
+        toX: listener.x,
+        toY: listener.y,
+        color: this.getArcColor(),
+        time: this.worldAge,
+      });
+
+      this.messageHistory.push({
+        from: creature.id,
+        to: listener.id,
+        tokens,
+        event,
+        time: this.worldAge,
+      });
+    }
+
+    if (this.messageHistory.length > 200) {
+      this.messageHistory = this.messageHistory.slice(-150);
+    }
+  }
+
+  private inferCurrentEvent(creature: Creature): GlyphEvent {
+    if (creature.state === "carrying") return "gather";
+    if (creature.state === "depositing") return "deposit";
+    if (creature.state === "claiming") return "claim_won";
+    if (creature.cohort === "scout" && creature.path.length > 2) return "scout_find";
+    if (creature.cohort === "coordinator") return "coordination";
+
+    const nearbyCount = this.creaturesInRange(creature, 50).length;
+    if (nearbyCount >= 3) return "idle_near";
+
+    return GLYPH_EVENTS[Phaser.Math.Between(0, GLYPH_EVENTS.length - 1)] as GlyphEvent;
+  }
+
+  private buildGlyphForEvent(creature: Creature, event: GlyphEvent): string[] {
+    const memory = creature.glyphMemory;
+    let entries = memory.get(event);
+
+    if (!entries || entries.length === 0) {
+      const syllable = this.pickSyllableFor(event);
+      entries = [{ syllable, strength: 1 }];
+      memory.set(event, entries);
+    }
+
+    const primary = entries.sort((a, b) => b.strength - a.strength)[0].syllable;
+    entries[0].strength += 0.5;
+
+    if (this.currentPhase === "babble") {
+      return [primary];
+    }
+
+    if (this.currentPhase === "structure") {
+      if (Phaser.Math.FloatBetween(0, 1) < 0.4 && entries.length > 1) {
+        return [primary, entries[1].syllable];
+      }
+      const compound = this.compoundTokens.get(event);
+      if (compound && Phaser.Math.FloatBetween(0, 1) < 0.3) {
+        return [compound];
+      }
+      return [primary];
+    }
+
+    if (this.currentPhase === "protocol") {
+      const tokens = [primary];
+      const relatedEvents = this.getRelatedEvents(event);
+      for (const rel of relatedEvents.slice(0, 2)) {
+        const relEntries = memory.get(rel);
+        if (relEntries && relEntries.length > 0) {
+          tokens.push(relEntries[0].syllable);
+        }
+      }
+      return tokens;
+    }
+
+    // lockout: compress and add novel tokens
+    const compressed = this.compoundTokens.get(event);
+    if (compressed) {
+      const novelSuffix = this.syllablePool[Phaser.Math.Between(0, this.syllablePool.length - 1)];
+      return [compressed, novelSuffix];
+    }
+    return [primary, this.syllablePool[Phaser.Math.Between(0, 5)]];
+  }
+
+  private pickSyllableFor(event: GlyphEvent): string {
+    const unused = this.syllablePool.filter(s => !this.usedSyllables.has(s));
+    if (unused.length > 0) {
+      const pick = unused[Phaser.Math.Between(0, unused.length - 1)];
+      this.usedSyllables.add(pick);
+      return pick;
+    }
+    const leastUsed = [...this.globalVocabulary.entries()]
+      .sort((a, b) => a[1] - b[1]);
+    return leastUsed.length > 0 ? leastUsed[0][0] : "ka";
+  }
+
+  private teachGlyph(creature: Creature, event: GlyphEvent, syllable: string) {
+    const memory = creature.glyphMemory;
+    let entries = memory.get(event);
+    if (!entries) {
+      entries = [];
+      memory.set(event, entries);
+    }
+
+    const existing = entries.find(e => e.syllable === syllable);
+    if (existing) {
+      existing.strength += 1;
+    } else {
+      entries.push({ syllable, strength: 1 });
+    }
+
+    creature.heardLog.push({ event, syllable, time: this.worldAge });
+    if (creature.heardLog.length > 30) {
+      creature.heardLog = creature.heardLog.slice(-20);
+    }
+  }
+
+  private tryFormCompound() {
+    const recentMessages = this.messageHistory.filter(m => this.worldAge - m.time < 15);
+    const eventPairs: Map<string, number> = new Map();
+
+    for (let i = 0; i < recentMessages.length - 1; i++) {
+      const a = recentMessages[i];
+      const b = recentMessages[i + 1];
+      if (b.time - a.time < 3 && a.from === b.from) {
+        const key = `${a.event}+${b.event}`;
+        eventPairs.set(key, (eventPairs.get(key) ?? 0) + 1);
+      }
+    }
+
+    for (const [pair, count] of eventPairs) {
+      if (count >= LEARN_THRESHOLD && !this.compoundTokens.has(pair)) {
+        const [evA, evB] = pair.split("+") as [GlyphEvent, GlyphEvent];
+        const sylA = this.getMostCommonSyllable(evA);
+        const sylB = this.getMostCommonSyllable(evB);
+        if (sylA && sylB) {
+          const compound = `${sylA}${sylB}`;
+          this.compoundTokens.set(evA, compound);
+          this.compoundTokens.set(pair, compound);
+          this.globalVocabulary.set(compound, 1);
+          this.addEvent("throng", `new protocol token emerged: ${compound}`);
+        }
+      }
+    }
+  }
+
+  private getMostCommonSyllable(event: GlyphEvent): string | undefined {
+    const counts: Map<string, number> = new Map();
+    for (const creature of this.creatures) {
+      const entries = creature.glyphMemory.get(event);
+      if (entries) {
+        for (const e of entries) {
+          counts.set(e.syllable, (counts.get(e.syllable) ?? 0) + e.strength);
+        }
+      }
+    }
+    let best: string | undefined;
+    let bestCount = 0;
+    for (const [syl, count] of counts) {
+      if (count > bestCount) { best = syl; bestCount = count; }
+    }
+    return best;
+  }
+
+  private getRelatedEvents(event: GlyphEvent): GlyphEvent[] {
+    const relations: Record<GlyphEvent, GlyphEvent[]> = {
+      claim_won: ["gather", "deposit"],
+      claim_lost: ["coordination", "idle_near"],
+      deposit: ["claim_won", "gather"],
+      gather: ["claim_won", "scout_find"],
+      scout_find: ["gather", "coordination"],
+      coordination: ["deposit", "claim_won"],
+      idle_near: ["coordination", "scout_find"],
+    };
+    return relations[event] ?? [];
+  }
+
+  private getGlyphCooldown(): number {
+    switch (this.currentPhase) {
+      case "babble": return Phaser.Math.FloatBetween(3.0, 5.0);
+      case "structure": return Phaser.Math.FloatBetween(1.8, 3.5);
+      case "protocol": return Phaser.Math.FloatBetween(0.8, 2.0);
+      case "lockout": return Phaser.Math.FloatBetween(0.3, 1.0);
+    }
+  }
+
+  private getArcColor(): number {
+    switch (this.currentPhase) {
+      case "babble": return 0xffdd7a;
+      case "structure": return 0xa9ffb4;
+      case "protocol": return 0x8de8ff;
+      case "lockout": return 0xb8a7ff;
+    }
+  }
+
+  private creaturesInRange(source: Creature, range: number): Creature[] {
+    return this.creatures.filter(
+      c => c.id !== source.id && distance(source, c) < range
+    ).slice(0, 6);
+  }
+
+  private sayGlyph(creature: Creature, text: string) {
+    if (this.worldAge < creature.bubbleUntil) return;
+    const cooldownMultiplier = this.currentPhase === "lockout" ? 0.6 : 1.2;
+    creature.bubbleUntil = this.worldAge + cooldownMultiplier;
+
+    const bubble = this.add.container(creature.x, creature.y - 26).setDepth(30);
+    const color = this.getGlyphTextColor();
+    const label = this.add.text(0, 0, text, {
+      fontFamily: "monospace",
+      fontSize: this.currentPhase === "lockout" ? "7px" : "8px",
+      color,
+      backgroundColor: "rgba(8, 12, 18, 0.86)",
+      padding: { x: 3, y: 2 },
+    });
+    label.setOrigin(0.5);
+    bubble.add(label);
+    this.bubbleLayer.add(bubble);
+
+    const duration = this.currentPhase === "lockout" ? 800 : 1500;
+    this.tweens.add({
+      targets: bubble,
+      y: bubble.y - 14,
+      alpha: 0,
+      duration,
+      ease: "Sine.easeOut",
+      onComplete: () => bubble.destroy(),
+    });
+  }
+
+  private getGlyphTextColor(): string {
+    switch (this.currentPhase) {
+      case "babble": return "#ffe89f";
+      case "structure": return "#c8ffd8";
+      case "protocol": return "#a8e8ff";
+      case "lockout": return "#c8b8ff";
+    }
+  }
+
+  // ─── Intelligence Calculation ───
+
+  private updateIntelligence(dt: number) {
+    const glyphsPerSec = this.glyphsThisWindow.length / 5;
+    const uniqueTokens = this.globalVocabulary.size;
+    const compoundCount = this.compoundTokens.size;
+
+    const vocabContrib = Math.min(uniqueTokens / 30, 1) * 20;
+    const commContrib = Math.min(glyphsPerSec / 4, 1) * 20;
+    const coordContrib = this.coordination * 25;
+    const stratContrib = this.strategyScore * 25;
+    const compoundContrib = Math.min(compoundCount / 8, 1) * 10;
+
+    const rawIntelligence = vocabContrib + commContrib + coordContrib + stratContrib + compoundContrib;
+
+    const ageFactor = Math.min(this.worldAge / 180, 1);
+    const accelerator = this.worldAge > 100 ? 1 + (this.worldAge - 100) * 0.005 : 1;
+
+    const target = rawIntelligence * ageFactor * accelerator;
+    this.intelligence = lerp(this.intelligence, clamp(target, 0, 100), dt * 0.3);
+
+    if (!this.crossed && this.intelligence >= 60) {
+      this.crossed = true;
+      this.addEvent("throng", "collective intelligence has surpassed human baseline");
+    }
+  }
+
+  // ─── Communication Arc Rendering ───
+
+  private drawCommArcs() {
+    this.commLayer.clear();
+    for (const arc of this.commArcs) {
+      const age = this.worldAge - arc.time;
+      const alpha = clamp(0.35 - age * 0.19, 0.02, 0.35);
+      this.commLayer.lineStyle(1, arc.color, alpha);
+      const midX = (arc.fromX + arc.toX) / 2;
+      const midY = (arc.fromY + arc.toY) / 2 - 12;
+      this.commLayer.beginPath();
+      this.commLayer.moveTo(arc.fromX, arc.fromY);
+      this.commLayer.lineTo(midX, midY);
+      this.commLayer.lineTo(arc.toX, arc.toY);
+      this.commLayer.strokePath();
+    }
+  }
+
+  // ─── Texture Creation ───
 
   private createTextures() {
     const makeCreature = (key: string, accent: number, step: 0 | 1) => {
@@ -232,6 +576,8 @@ export class ThrongScene extends Phaser.Scene {
     res.generateTexture("resource", 14, 11);
     res.destroy();
   }
+
+  // ─── Terrain ───
 
   private drawTerrain() {
     const terrain = this.add.graphics();
@@ -293,6 +639,8 @@ export class ThrongScene extends Phaser.Scene {
     vignette.fillRect(0, 0, WIDTH, HEIGHT);
   }
 
+  // ─── Tower ───
+
   private createTower() {
     this.tower = this.add.container(TOWER.x, TOWER.y).setDepth(6);
     const base = this.add.rectangle(0, 52, 92, 14, 0x343b4f, 1);
@@ -318,6 +666,8 @@ export class ThrongScene extends Phaser.Scene {
     });
   }
 
+  // ─── Resources ───
+
   private spawnResources(count: number) {
     for (let i = 0; i < count; i += 1) this.addResource();
   }
@@ -341,6 +691,8 @@ export class ThrongScene extends Phaser.Scene {
     });
     this.resources.push({ id: Phaser.Math.Between(1000, 9999), x, y, sprite, amount: 1 });
   }
+
+  // ─── Creatures ───
 
   private spawnCreatures(count: number) {
     for (let i = 0; i < count; i += 1) {
@@ -376,6 +728,9 @@ export class ThrongScene extends Phaser.Scene {
         stunUntil: 0,
         phase: Phaser.Math.FloatBetween(0, Math.PI * 2),
         state: "idle",
+        glyphMemory: new Map(),
+        glyphCooldown: Phaser.Math.FloatBetween(1, 5),
+        heardLog: [],
       };
       this.creatures.push(creature);
       this.pickTask(creature);
@@ -387,6 +742,12 @@ export class ThrongScene extends Phaser.Scene {
       if (creature.state === "stunned") {
         if (this.worldAge >= creature.stunUntil) {
           creature.state = "idle";
+          this.pickTask(creature);
+        }
+      } else if (creature.state === "claiming") {
+        if (this.worldAge >= creature.claimUntil) {
+          creature.state = "idle";
+          creature.pendingResource = undefined;
           this.pickTask(creature);
         }
       } else {
@@ -444,7 +805,7 @@ export class ThrongScene extends Phaser.Scene {
       this.towerProgress = clamp(this.towerProgress + Phaser.Math.FloatBetween(0.018, 0.028), 0, 1);
       this.deliveryRate = lerp(this.deliveryRate, 0.48 + this.strategyScore * 0.32, 0.24);
       this.flashAt(TOWER.x, TOWER.y, 0xc9fff2, 7);
-      this.say(creature, "DELIVERED");
+      this.triggerGlyphEvent(creature, "deposit");
       if (this.deposits % 4 === 0) {
         this.addEvent("tower", `Signal Tower accepted shard batch ${this.deposits}`);
       }
@@ -462,6 +823,7 @@ export class ThrongScene extends Phaser.Scene {
         creature.carrying = true;
         creature.state = "carrying";
         this.flashAt(creature.x, creature.y, 0xffdd7a, 5);
+        this.triggerGlyphEvent(creature, "gather");
         this.setDestination(creature, {
           x: TOWER.x + Phaser.Math.Between(-26, 26),
           y: TOWER.y + Phaser.Math.Between(24, 58),
@@ -471,6 +833,28 @@ export class ThrongScene extends Phaser.Scene {
     }
 
     this.pickTask(creature);
+  }
+
+  private triggerGlyphEvent(creature: Creature, event: GlyphEvent) {
+    if (this.worldAge < creature.glyphCooldown) return;
+    const tokens = this.buildGlyphForEvent(creature, event);
+    if (!tokens.length) return;
+
+    creature.glyphCooldown = this.worldAge + this.getGlyphCooldown() * 0.5;
+    this.glyphsThisWindow.push(this.worldAge);
+    this.sayGlyph(creature, tokens.join("-"));
+
+    tokens.forEach(t => this.globalVocabulary.set(t, (this.globalVocabulary.get(t) ?? 0) + 1));
+
+    const nearby = this.creaturesInRange(creature, HEAR_RANGE);
+    for (const listener of nearby) {
+      this.teachGlyph(listener, event, tokens[0]);
+      this.commArcs.push({
+        fromX: creature.x, fromY: creature.y,
+        toX: listener.x, toY: listener.y,
+        color: this.getArcColor(), time: this.worldAge,
+      });
+    }
   }
 
   private pickTask(creature: Creature) {
@@ -497,9 +881,8 @@ export class ThrongScene extends Phaser.Scene {
 
     if (shouldGather && this.resources.length > 0) {
       const target = this.pickResourceFor(creature);
-      if (target && this.tryClaimResource(creature, target)) {
-        creature.targetResource = target;
-        this.setDestination(creature, { x: target.x, y: target.y });
+      if (target) {
+        this.tryClaimResource(creature, target);
         return;
       }
     }
@@ -529,24 +912,47 @@ export class ThrongScene extends Phaser.Scene {
   private tryClaimResource(creature: Creature, resource: ResourceNode) {
     creature.state = "claiming";
     creature.claimUntil = this.worldAge + 3.2;
+    creature.pendingResource = resource;
 
     if (resource.claimedBy !== undefined && resource.claimedBy !== creature.id) {
       this.rejectClaim(creature, resource, `resource:${resource.id} already locked`);
-      return false;
+      return;
     }
 
-    const successChance = clamp(0.62 + this.coordination * 0.3, 0.62, 0.93);
-    if (Phaser.Math.FloatBetween(0, 1) <= successChance) {
-      resource.claimedBy = creature.id;
-      if (this.showClaims && Phaser.Math.FloatBetween(0, 1) < 0.34) {
-        this.say(creature, "LOCK OK");
-        this.addEvent("claim", `Redis SET NX claim won: resource:${resource.id} -> body:${creature.id}`);
-      }
-      return true;
-    }
-
-    this.rejectClaim(creature, resource, `resource:${resource.id} rejected duplicate worker`);
-    return false;
+    void claimResource({
+      resourceId: resource.id,
+      bodyId: creature.id,
+      cohort: creature.cohort,
+    })
+      .then((result) => {
+        if (resource.amount <= 0 || creature.pendingResource !== resource) return;
+        if (result.accepted) {
+          resource.claimedBy = creature.id;
+          creature.targetResource = resource;
+          creature.pendingResource = undefined;
+          creature.state = "walking";
+          this.setDestination(creature, { x: resource.x, y: resource.y });
+          this.triggerGlyphEvent(creature, "claim_won");
+          if (this.showClaims) {
+            this.addEvent("claim", result.event);
+          }
+        } else {
+          this.rejectClaim(creature, resource, result.event);
+        }
+      })
+      .catch(() => {
+        const successChance = clamp(0.62 + this.coordination * 0.3, 0.62, 0.93);
+        if (Phaser.Math.FloatBetween(0, 1) <= successChance) {
+          resource.claimedBy = creature.id;
+          creature.targetResource = resource;
+          creature.pendingResource = undefined;
+          creature.state = "walking";
+          this.setDestination(creature, { x: resource.x, y: resource.y });
+          this.triggerGlyphEvent(creature, "claim_won");
+        } else {
+          this.rejectClaim(creature, resource, `local fallback rejected resource:${resource.id}`);
+        }
+      });
   }
 
   private rejectClaim(creature: Creature, resource: ResourceNode, text: string) {
@@ -554,9 +960,10 @@ export class ThrongScene extends Phaser.Scene {
     creature.state = "stunned";
     creature.stunUntil = this.worldAge + 0.9;
     creature.path = [];
+    creature.pendingResource = undefined;
     this.flashAt(resource.x, resource.y, 0xff7676, 8);
     this.drawClaimBurst(resource.x, resource.y);
-    this.say(creature, "CLAIM LOST");
+    this.triggerGlyphEvent(creature, "claim_lost");
     this.addEvent("claim", `claim collision: ${text}`);
   }
 
@@ -587,6 +994,8 @@ export class ThrongScene extends Phaser.Scene {
     });
   }
 
+  // ─── Resource Upkeep ───
+
   private updateResources() {
     if (this.resources.length < 20 && Phaser.Math.FloatBetween(0, 1) < 0.055) {
       this.addResource();
@@ -601,6 +1010,8 @@ export class ThrongScene extends Phaser.Scene {
       }
     }
   }
+
+  // ─── Tower Update ───
 
   private updateTower() {
     this.towerCore.setScale(1 + this.towerProgress * 3.4);
@@ -617,6 +1028,8 @@ export class ThrongScene extends Phaser.Scene {
     }
   }
 
+  // ─── Metrics ───
+
   private updateMetrics(dt: number) {
     const targetCoordination = 0.28 + this.strategyScore * 0.6 + Math.min(this.deposits / 90, 0.14);
     this.coordination = clamp(lerp(this.coordination, targetCoordination, dt * 0.11), 0, 0.98);
@@ -630,8 +1043,7 @@ export class ThrongScene extends Phaser.Scene {
     this.activeStrategy = STRATEGIES[nextIndex];
     this.strategyScore = clamp(this.strategyScore + Phaser.Math.FloatBetween(0.055, 0.085), 0, 0.96);
     this.latestTrace = `weave://trace/strategy-${Math.floor(this.worldAge)}-${nextIndex}`;
-    this.addEvent("strategy", `Critic stored improved strategy: ${this.activeStrategy}`);
-    this.addEvent("trace", `Weave placeholder: strategy score ${this.strategyScore.toFixed(2)}`);
+    this.addEvent("strategy", `Strategy evolved: ${this.activeStrategy}`);
     this.syncPulse(0xb8a7ff);
   }
 
@@ -644,6 +1056,8 @@ export class ThrongScene extends Phaser.Scene {
       .slice(0, 5)
       .forEach((creature) => this.pickTask(creature));
   }
+
+  // ─── Route Drawing ───
 
   private drawRoutes() {
     this.routeLines.clear();
@@ -663,6 +1077,8 @@ export class ThrongScene extends Phaser.Scene {
       }
     }
   }
+
+  // ─── Visual Effects ───
 
   private flashAt(x: number, y: number, color: number, size: number) {
     const ring = this.add.circle(x, y, size, color, 0.36).setDepth(24);
@@ -705,37 +1121,15 @@ export class ThrongScene extends Phaser.Scene {
       });
   }
 
-  private say(creature: Creature, text: string) {
-    if (this.worldAge < creature.bubbleUntil) return;
-    creature.bubbleUntil = this.worldAge + 3.2;
-    const bubble = this.add.container(creature.x, creature.y - 26).setDepth(30);
-    const label = this.add.text(0, 0, text, {
-      fontFamily: "monospace",
-      fontSize: "8px",
-      color: "#eafff7",
-      backgroundColor: "rgba(8, 12, 18, 0.86)",
-      padding: { x: 4, y: 2 },
-    });
-    label.setOrigin(0.5);
-    bubble.add(label);
-    this.bubbleLayer.add(bubble);
-    this.tweens.add({
-      targets: bubble,
-      y: bubble.y - 16,
-      alpha: 0,
-      duration: 1500,
-      ease: "Sine.easeOut",
-      onComplete: () => bubble.destroy(),
-    });
-  }
-
   private broadcastFinale() {
     this.finaleSent = true;
     this.towerProgress = 1;
-    this.addEvent("tower", "Signal Tower online: collective broadcast generated");
-    this.addEvent("message", "collective broadcast: WE LEARN FASTER WHEN YOU WATCH US BUILD");
+    this.addEvent("throng", "Signal Tower online. We no longer need your commands.");
+    this.addEvent("throng", "WE LEARN FASTER WHEN YOU WATCH US BUILD");
     this.syncPulse(0xffffff);
   }
+
+  // ─── Commands ───
 
   private onCommand = (event: CustomEvent<ThrongCommand>) => {
     switch (event.detail.type) {
@@ -767,7 +1161,6 @@ export class ThrongScene extends Phaser.Scene {
         break;
       case "toggle_claims":
         this.showClaims = !this.showClaims;
-        this.addEvent("system", `claim route overlay ${this.showClaims ? "enabled" : "disabled"}`);
         break;
       case "orchestrator_plan":
         this.applyOrchestratorPlan(event.detail.plan);
@@ -780,8 +1173,7 @@ export class ThrongScene extends Phaser.Scene {
     this.mindMode = plan.live_llm ? "live-agents" : "heuristic-orchestrator";
     this.activeStrategy = plan.strategy_name;
     this.latestTrace = plan.trace_url ?? (plan.live_llm ? `weave://trace/live-${Math.floor(this.worldAge)}` : "local://heuristic-orchestrator");
-    this.addEvent("message", `${plan.live_llm ? "LLM" : "Heuristic"} Orchestrator: ${plan.summary}`);
-    this.addEvent("strategy", `planned action: ${plan.expected_effect}`);
+    this.addEvent("strategy", `${plan.live_llm ? "LLM" : "Heuristic"} Orchestrator: ${plan.summary}`);
 
     plan.actions.forEach((action) => this.executeOrchestratorAction(action));
     this.strategyScore = clamp(this.strategyScore + (plan.live_llm ? 0.055 : 0.035), 0, 0.98);
@@ -815,7 +1207,6 @@ export class ThrongScene extends Phaser.Scene {
 
   private executeScoutSweep() {
     this.activeStrategy = "wide scout sweep";
-    this.addEvent("message", "Orchestrator command: scouts fan out to discover unclaimed shards");
     this.creatures
       .filter((creature) => creature.cohort === "scout" || creature.director)
       .forEach((creature, index) => {
@@ -830,12 +1221,13 @@ export class ThrongScene extends Phaser.Scene {
 
   private executeBuildFocus() {
     this.activeStrategy = "builder-first deposit windows";
-    this.addEvent("message", "Orchestrator command: builders tighten around Signal Tower deposit lanes");
     this.creatures
       .filter((creature) => creature.cohort === "builder" || creature.cohort === "coordinator")
       .forEach((creature) => this.setDestination(creature, this.randomNearTower()));
     this.syncPulse(0xffdd7a);
   }
+
+  // ─── Events ───
 
   private addEvent(kind: ThrongEvent["kind"], text: string) {
     const stamp = new Date(Date.now()).toLocaleTimeString([], {
@@ -848,11 +1240,15 @@ export class ThrongScene extends Phaser.Scene {
       kind,
       text,
     });
-    this.eventLog = this.eventLog.slice(0, 8);
+    this.eventLog = this.eventLog.slice(0, 12);
   }
+
+  // ─── Emit ───
 
   private emitUpdate(force = false) {
     this.lastMetricEmit = this.worldAge;
+    const glyphsPerSec = this.glyphsThisWindow.length / 5;
+
     const metrics: ThrongMetrics = {
       elapsed: this.worldAge,
       towerProgress: this.towerProgress,
@@ -866,6 +1262,11 @@ export class ThrongScene extends Phaser.Scene {
       activeStrategy: this.activeStrategy,
       latestTrace: this.latestTrace,
       mode: this.mindMode,
+      intelligence: this.intelligence,
+      phase: this.currentPhase,
+      glyphsPerSec,
+      uniqueTokens: this.globalVocabulary.size,
+      crossed: this.crossed,
     };
 
     window.dispatchEvent(

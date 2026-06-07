@@ -192,6 +192,19 @@ OpenAI Agent Layer
 W&B Weave
 ```
 
+## Modular Edit Points
+
+The current prototype is split around the parts we expect to replace during the hackathon:
+
+- `src/game/worldConfig.ts` controls the board size, arena bounds, tower position, path network, cohort colors, body/director counts, and strategy names. Change this first for visual/world layout experiments.
+- `src/game/ThrongScene.ts` owns Phaser rendering and deterministic body physics: walking, claiming, carrying, depositing, tower progress, and visual effects.
+- `src/game/api.ts` owns every frontend call into the backend. Swap backend URLs or endpoint shapes here instead of editing React or Phaser directly.
+- `src/game/types.ts` is the shared contract for metrics, commands, plans, critic output, claim results, and integration status.
+- `src/ui/App.tsx` owns the right-side control rail, live metric chart, operator commands, and LLM/critic polling.
+- `backend/main.py` owns the hackathon backend surface: OpenAI director calls, Critic reflection, Redis claim arbitration, fallback memory claims, and Weave wrapping.
+
+The intended rule is simple: visuals change in `worldConfig.ts`, `ThrongScene.ts`, and `styles.css`; agent behavior changes in backend endpoints and typed commands; UI copy/control layout changes in `App.tsx`.
+
 ## Components
 
 ### Web Game UI

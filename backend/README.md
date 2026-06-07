@@ -18,3 +18,16 @@ Optional Weave tracing:
 set WANDB_API_KEY=...
 set WEAVE_PROJECT=the-throng
 ```
+
+Optional Redis claim arbitration:
+
+```bash
+set REDIS_URL=redis://127.0.0.1:6379/0
+```
+
+Current endpoints:
+
+- `GET /api/orchestrator/status` reports OpenAI, Redis, and Weave health.
+- `POST /api/orchestrator/decide` asks the director for legal game actions.
+- `POST /api/critic/reflect` asks the critic to produce a reusable strategy.
+- `POST /api/claims/claim` performs Redis `SET NX` resource arbitration, with an in-memory fallback.
